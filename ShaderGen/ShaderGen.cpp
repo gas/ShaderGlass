@@ -162,6 +162,19 @@ static string intArrayToString(uint32_t* data, size_t size)
     return sbuf.str();
 }
 
+static string fileToString(const filesystem::path& input)
+{
+    ifstream inf(input, ios::binary | ios::ate);
+    auto     size = inf.tellg();
+    inf.seekg(0, ios::beg);
+    vector<uint8_t> buffer;
+    buffer.resize(size);
+    inf.read((char*)buffer.data(), size);
+    inf.close();
+
+    return byteArrayToString(buffer.data(), size);
+}
+
 pair<string, string> fxc(const filesystem::path& shaderPath, const string& profile, const string& source, ofstream& log, bool& warn)
 {
     filesystem::path input = tempPath / shaderPath;
@@ -582,29 +595,36 @@ void populatePresetTemplate(
     log << "Generated PresetDef " << info.outputPath << endl;
 }
 
+#define VULKAN
+
 void processShader(SourceShaderDef def, ofstream& log, bool& warn)
 {
     try
     {
         ShaderGC::ProcessSourceShader(def, log, warn);
 
-        const auto& vertexOutput   = spirv(glsl(def.input, "vert", def.vertexSource, log, warn), "vert", log, warn);
-        const auto& fragmentOutput = spirv(glsl(def.input, "frag", def.fragmentSource, log, warn), "frag", log, warn);
-        def.vertexSource           = vertexOutput.first;
-        def.vertexMetadata         = vertexOutput.second;
-        def.fragmentSource         = fragmentOutput.first;
-        def.fragmentMetadata       = fragmentOutput.second;
+        const auto& vertexSpirvPath   = glsl(def.input, "vert", def.vertexSource, log, warn);
+        const auto& fragmentSpirvPath = glsl(def.input, "frag", def.fragmentSource, log, warn);
+        const auto& vertexOutput      = spirv(vertexSpirvPath, "vert", log, warn);
+        const auto& fragmentOutput    = spirv(fragmentSpirvPath, "frag", log, warn);
+        def.vertexSource              = vertexOutput.first;
+        def.vertexMetadata            = vertexOutput.second;
+        def.fragmentSource            = fragmentOutput.first;
+        def.fragmentMetadata          = fragmentOutput.second;
 
         filesystem::path metaOutput(tempPath / def.input);
         metaOutput.replace_extension(".meta");
         saveSource(metaOutput, fragmentOutput.second);
 
-        auto vertexCode      = fxc(def.input, "vs_5_0", vertexOutput.first, log, warn);
-        auto fragmentCode    = fxc(def.input, "ps_5_0", fragmentOutput.first, log, warn);
-        def.vertexByteCode   = vertexCode.first;
-        def.vertexHash       = vertexCode.second;
+#ifdef VULKAN
+        def.vertexByteCode   = fileToString(vertexSpirvPath);
+        def.fragmentByteCode = fileToString(fragmentSpirvPath);
+#else
+        auto vertexCode   = fxc(def.input, "vs_5_0", vertexOutput.first, log, warn);
+        auto fragmentCode = fxc(def.input, "ps_5_0", fragmentOutput.first, log, warn);
+        def.vertexByteCode = vertexCode.first;
         def.fragmentByteCode = fragmentCode.first;
-        def.fragmentHash     = fragmentCode.second;
+#endif
 
         replace(def.vertexByteCode, " ", "");
         replace(def.vertexHash, " ", "");
